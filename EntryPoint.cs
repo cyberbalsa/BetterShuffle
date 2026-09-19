@@ -24,6 +24,7 @@ namespace Emby.Plugins.BetterShuffle
         private readonly ISessionManager sessionManager;
         private readonly IApplicationPaths applicationPaths;
         private readonly IXmlSerializer xmlSerializer;
+        private readonly IUserDataManager userDataManager;
         private readonly ILogger logger;
         private object harmony;
         private Type harmonyType;
@@ -33,11 +34,13 @@ namespace Emby.Plugins.BetterShuffle
             ISessionManager sessionManager,
             IApplicationPaths applicationPaths,
             IXmlSerializer xmlSerializer,
+            IUserDataManager userDataManager,
             ILogManager logManager)
         {
             this.sessionManager = sessionManager;
             this.applicationPaths = applicationPaths;
             this.xmlSerializer = xmlSerializer;
+            this.userDataManager = userDataManager;
             this.logger = logManager.GetLogger("BetterShuffle");
         }
 
@@ -132,7 +135,7 @@ namespace Emby.Plugins.BetterShuffle
 
                 string statePath = Path.Combine(this.applicationPaths.PluginConfigurationsPath, "bettershuffle-state.xml");
                 ShuffleStateStore store = new ShuffleStateStore(this.xmlSerializer, this.logger, statePath);
-                BetterShuffleRuntime.Initialize(store, this.logger);
+                BetterShuffleRuntime.Initialize(store, this.userDataManager, this.logger);
 
                 object harmonyPostfix = Activator.CreateInstance(harmonyMethodType, new object[] { postfix });
                 this.harmony = Activator.CreateInstance(this.harmonyType, new object[] { HarmonyId });

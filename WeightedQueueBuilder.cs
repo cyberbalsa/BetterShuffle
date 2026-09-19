@@ -6,6 +6,32 @@ using MediaBrowser.Model.Dto;
 
 namespace Emby.Plugins.BetterShuffle
 {
+    internal sealed class EpisodePlaybackData
+    {
+        public bool Played { get; set; }
+
+        public int PlayCount { get; set; }
+
+        public DateTimeOffset? LastPlayedDate { get; set; }
+    }
+
+    internal sealed class WeightedQueueResult
+    {
+        public IList<BaseItemDto> Items { get; set; }
+
+        public int WatchedCount { get; set; }
+
+        public int UnwatchedCount { get; set; }
+
+        public int FirstTierCount { get; set; }
+
+        public int FirstTierWatchedCount { get; set; }
+
+        public int FirstTierUnwatchedCount { get; set; }
+
+        public double FirstTierUnwatchedProbability { get; set; }
+    }
+
     internal sealed class WeightedQueueBuilder
     {
         private readonly Random random;
@@ -26,8 +52,9 @@ namespace Emby.Plugins.BetterShuffle
             this.random = new Random(seed);
         }
 
-        public IList<BaseItemDto> Build(
+        public WeightedQueueResult Build(
             IEnumerable<BaseItemDto> episodes,
+            IReadOnlyDictionary<string, EpisodePlaybackData> playbackData,
             HashSet<string> remainingIds,
             PluginConfiguration configuration,
             DateTimeOffset now)
@@ -47,33 +74,76 @@ namespace Emby.Plugins.BetterShuffle
                 served = new List<BaseItemDto>();
             }
 
-            List<BaseItemDto> result = SpreadSeasons(Rank(unserved, configuration, now), configuration.MaximumSameSeasonRun);
-            result.AddRange(SpreadSeasons(Rank(served, configuration, now), configuration.MaximumSameSeasonRun));
-            return result;
+            List<BaseItemDto> firstTier = unserved.Count > 0 ? unserved : served;
+            double firstTierUnwatchedWeight = firstTier
+                .Where(i => !GetPlaybackData(i, playbackData).Played)
+                .Sum(i => GetWeight(GetPlaybackData(i, playbackData), configuration, now));
+            double firstTierTotalWeight = firstTier
+                .Sum(i => GetWeight(GetPlaybackData(i, playbackData), configuration, now));
+
+            List<BaseItemDto> result = SpreadSeasons(
+                Rank(unserved, playbackData, configuration, now),
+                configuration.MaximumSameSeasonRun);
+            result.AddRange(SpreadSeasons(
+                Rank(served, playbackData, configuration, now),
+                configuration.MaximumSameSeasonRun));
+
+            return new WeightedQueueResult
+            {
+                Items = result,
+                WatchedCount = all.Count(i => GetPlaybackData(i, playbackData).Played),
+                UnwatchedCount = all.Count(i => !GetPlaybackData(i, playbackData).Played),
+                FirstTierCount = firstTier.Count,
+                FirstTierWatchedCount = firstTier.Count(i => GetPlaybackData(i, playbackData).Played),
+                FirstTierUnwatchedCount = firstTier.Count(i => !GetPlaybackData(i, playbackData).Played),
+                FirstTierUnwatchedProbability = firstTierTotalWeight > 0
+                    ? firstTierUnwatchedWeight / firstTierTotalWeight
+                    : 0
+            };
         }
 
-        private List<BaseItemDto> Rank(IEnumerable<BaseItemDto> episodes, PluginConfiguration configuration, DateTimeOffset now)
+        private List<BaseItemDto> Rank(
+            IEnumerable<BaseItemDto> episodes,
+            IReadOnlyDictionary<string, EpisodePlaybackData> playbackData,
+            PluginConfiguration configuration,
+            DateTimeOffset now)
         {
             return episodes
                 .Select(item => new
                 {
                     Item = item,
-                    Key = -Math.Log(Math.Max(this.random.NextDouble(), 1e-12)) / GetWeight(item, configuration, now)
+                    Key = -Math.Log(Math.Max(this.random.NextDouble(), 1e-12))
+                        / GetWeight(GetPlaybackData(item, playbackData), configuration, now)
                 })
                 .OrderBy(i => i.Key)
                 .Select(i => i.Item)
                 .ToList();
         }
 
-        private static double GetWeight(BaseItemDto item, PluginConfiguration configuration, DateTimeOffset now)
+        private static EpisodePlaybackData GetPlaybackData(
+            BaseItemDto item,
+            IReadOnlyDictionary<string, EpisodePlaybackData> playbackData)
         {
-            UserItemDataDto data = item.UserData;
-            if (data == null || !data.Played)
+            EpisodePlaybackData data;
+            if (!playbackData.TryGetValue(ShuffleStateStore.NormalizeId(item.Id), out data))
+            {
+                throw new InvalidOperationException($"Authoritative user data was not loaded for episode {item.Id}.");
+            }
+
+            return data;
+        }
+
+        private static double GetWeight(
+            EpisodePlaybackData data,
+            PluginConfiguration configuration,
+            DateTimeOffset now)
+        {
+            if (!data.Played)
             {
                 return Math.Max(configuration.UnseenWeight, 0.01);
             }
 
-            int playCount = Math.Max(data.PlayCount ?? 1, 1);
+            int playCount = Math.Max(data.PlayCount, 1);
             double playCountWeight = 1.0 / Math.Pow(1.0 + playCount, Math.Max(configuration.PlayCountExponent, 0.0));
             double recoveryDays = Math.Max(configuration.RecencyRecoveryDays, 1.0);
             double daysSincePlayed = data.LastPlayedDate.HasValue

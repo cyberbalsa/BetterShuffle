@@ -4,8 +4,8 @@ set -eu
 archive_url=${1:?usage: install-server.sh ARCHIVE_URL ARCHIVE_SHA256}
 archive_digest=${2:?usage: install-server.sh ARCHIVE_URL ARCHIVE_SHA256}
 plugin_dir=${BETTERSHUFFLE_PLUGIN_DIR:-/config/plugins}
-version=0.1.1
-plugin_digest=fca3aae10bfc58d180d48db3395c5f12508fd77c59c91bc21aa26682d6142809
+version=0.1.2
+plugin_digest=744931de00a469ce9574ca0a211bde58a23ef1d46b6684cc8b39b0c2d8248f51
 harmony_digest=2b0496067bda368ff35c383d80421401c57a3acc091dcb3e5a8f15636104987f
 archive=/tmp/bettershuffle-${version}.$$.zip
 stage=$plugin_dir/.bettershuffle-stage.$$

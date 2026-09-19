@@ -34,6 +34,15 @@ ping and authenticated APIs remained available and its stock shuffle stayed
 active. Restoring the validated dependency and restarting returned the status
 to `PatchActive: true`.
 
+## Authoritative user-data test
+
+Version 0.1.2 was tested against an episode whose recursive-list DTO reported
+`PlayCount: 0` and no last-played time. BetterShuffle retrieved the authoritative
+record as `PlayCount: 1` with its actual last-played timestamp and used those
+values in the queue. With plugin debug logging enabled, the same values appeared
+in both the compact server log entry and the structured `LastShuffle` status.
+The authoritative lookup for the 11-episode test scope took 2 ms.
+
 ## Compatibility boundary
 
 Emby's reserved `Random` sort is implemented inside the server and has no

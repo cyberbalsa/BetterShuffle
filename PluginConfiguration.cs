@@ -19,5 +19,7 @@ namespace Emby.Plugins.BetterShuffle
         public int MaximumSameSeasonRun { get; set; } = 2;
 
         public bool CoverageBagEnabled { get; set; } = true;
+
+        public bool EnableDebugLogging { get; set; } = false;
     }
 }

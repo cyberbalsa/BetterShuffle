@@ -3,7 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Emby.Plugins.BetterShuffle</AssemblyName>
     <RootNamespace>Emby.Plugins.BetterShuffle</RootNamespace>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Description>Weighted, coverage-aware replacement for Emby Android TV episode shuffle.</Description>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>

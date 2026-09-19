@@ -1,21 +1,53 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using MediaBrowser.Controller.Api;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Services;
 
 namespace Emby.Plugins.BetterShuffle
 {
+    internal sealed class ShuffleDiagnostics
+    {
+        public DateTimeOffset TimestampUtc { get; set; }
+
+        public string ScopeName { get; set; }
+
+        public int EpisodeCount { get; set; }
+
+        public int WatchedCount { get; set; }
+
+        public int UnwatchedCount { get; set; }
+
+        public int CoverageRemaining { get; set; }
+
+        public int FirstTierCount { get; set; }
+
+        public double FirstTierUnwatchedProbability { get; set; }
+
+        public string FirstEpisodeName { get; set; }
+
+        public bool FirstEpisodePlayed { get; set; }
+
+        public int FirstEpisodePlayCount { get; set; }
+
+        public DateTimeOffset? FirstEpisodeLastPlayedDate { get; set; }
+
+        public long UserDataLookupMilliseconds { get; set; }
+    }
+
     internal static class BetterShuffleRuntime
     {
         private static readonly object SyncRoot = new object();
         private static readonly WeightedQueueBuilder QueueBuilder = new WeightedQueueBuilder();
         private static ShuffleStateStore stateStore;
+        private static IUserDataManager userDataManager;
         private static ILogger logger;
 
         public static bool PatchActive { get; set; }
@@ -24,9 +56,15 @@ namespace Emby.Plugins.BetterShuffle
 
         public static int BagCount => stateStore == null ? 0 : stateStore.BagCount;
 
-        public static void Initialize(ShuffleStateStore store, ILogger runtimeLogger)
+        public static ShuffleDiagnostics LastShuffle { get; private set; }
+
+        public static void Initialize(
+            ShuffleStateStore store,
+            IUserDataManager runtimeUserDataManager,
+            ILogger runtimeLogger)
         {
             stateStore = store;
+            userDataManager = runtimeUserDataManager;
             logger = runtimeLogger;
         }
 
@@ -106,14 +144,48 @@ namespace Emby.Plugins.BetterShuffle
                     return;
                 }
 
+                User user = apiService.UserManager.GetUserById(userGuid);
+                if (user == null || userDataManager == null)
+                {
+                    return;
+                }
+
+                Stopwatch userDataTimer = Stopwatch.StartNew();
+                Dictionary<string, EpisodePlaybackData> playbackData = new Dictionary<string, EpisodePlaybackData>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (BaseItemDto episode in episodes)
+                {
+                    long episodeInternalId;
+                    if (!long.TryParse(episode.Id, out episodeInternalId))
+                    {
+                        throw new InvalidOperationException($"Episode {episode.Id} does not have an internal numeric ID.");
+                    }
+
+                    UserItemData data = userDataManager.GetUserData(user, episodeInternalId);
+                    playbackData[ShuffleStateStore.NormalizeId(episode.Id)] = new EpisodePlaybackData
+                    {
+                        Played = data?.Played ?? false,
+                        PlayCount = data?.PlayCount ?? 0,
+                        LastPlayedDate = data?.LastPlayedDate
+                    };
+                }
+
+                userDataTimer.Stop();
+
                 lock (SyncRoot)
                 {
+                    DateTimeOffset now = DateTimeOffset.UtcNow;
                     HashSet<string> remaining = stateStore.GetRemaining(
                         userGuid.ToString("N"),
                         ShuffleStateStore.NormalizeId(parentId),
                         episodes.Select(i => i.Id));
-                    IList<BaseItemDto> orderedEpisodes = QueueBuilder.Build(episodes, remaining, configuration, DateTimeOffset.UtcNow);
-                    Queue<BaseItemDto> queue = new Queue<BaseItemDto>(orderedEpisodes);
+                    WeightedQueueResult build = QueueBuilder.Build(
+                        episodes,
+                        playbackData,
+                        remaining,
+                        configuration,
+                        now);
+                    Queue<BaseItemDto> queue = new Queue<BaseItemDto>(build.Items);
 
                     for (int index = 0; index < items.Length; index++)
                     {
@@ -123,11 +195,45 @@ namespace Emby.Plugins.BetterShuffle
                         }
                     }
 
-                    logger.Debug(
-                        "Replaced stock Android TV shuffle for {0}: {1} episodes, {2} remaining in coverage cycle",
-                        parent.Name,
-                        episodes.Count,
-                        remaining.Count);
+                    BaseItemDto first = build.Items[0];
+                    EpisodePlaybackData firstData = playbackData[ShuffleStateStore.NormalizeId(first.Id)];
+                    LastShuffle = new ShuffleDiagnostics
+                    {
+                        TimestampUtc = now,
+                        ScopeName = parent.Name,
+                        EpisodeCount = episodes.Count,
+                        WatchedCount = build.WatchedCount,
+                        UnwatchedCount = build.UnwatchedCount,
+                        CoverageRemaining = remaining.Count,
+                        FirstTierCount = build.FirstTierCount,
+                        FirstTierUnwatchedProbability = build.FirstTierUnwatchedProbability,
+                        FirstEpisodeName = first.Name,
+                        FirstEpisodePlayed = firstData.Played,
+                        FirstEpisodePlayCount = firstData.PlayCount,
+                        FirstEpisodeLastPlayedDate = firstData.LastPlayedDate,
+                        UserDataLookupMilliseconds = userDataTimer.ElapsedMilliseconds
+                    };
+
+                    Action<string, object[]> log = configuration.EnableDebugLogging
+                        ? new Action<string, object[]>((message, args) => logger.Info(message, args))
+                        : new Action<string, object[]>((message, args) => logger.Debug(message, args));
+                    log(
+                        "BetterShuffle debug: scope={0}; episodes={1}; watched={2}; unwatched={3}; coverageRemaining={4}; firstTier={5}; firstTierUnwatchedChance={6:F2}%; first={7}; firstPlayed={8}; firstPlayCount={9}; firstLastPlayed={10}; userDataMs={11}",
+                        new object[]
+                        {
+                            parent.Name,
+                            episodes.Count,
+                            build.WatchedCount,
+                            build.UnwatchedCount,
+                            remaining.Count,
+                            build.FirstTierCount,
+                            build.FirstTierUnwatchedProbability * 100.0,
+                            first.Name,
+                            firstData.Played,
+                            firstData.PlayCount,
+                            firstData.LastPlayedDate?.ToString("O") ?? "never",
+                            userDataTimer.ElapsedMilliseconds
+                        });
                 }
             }
             catch (Exception ex)
