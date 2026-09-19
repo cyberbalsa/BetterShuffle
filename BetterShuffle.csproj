@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Emby.Plugins.BetterShuffle</AssemblyName>
+    <RootNamespace>Emby.Plugins.BetterShuffle</RootNamespace>
+    <Version>0.1.1</Version>
+    <Description>Weighted, coverage-aware replacement for Emby Android TV episode shuffle.</Description>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MediaBrowser.Server.Core" Version="4.10.0.24-beta2" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+  </ItemGroup>
+</Project>
